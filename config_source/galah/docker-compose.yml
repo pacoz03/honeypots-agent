@@ -1,0 +1,33 @@
+networks:
+  galah_local:
+
+services:
+
+# Galah service
+  galah:
+    build: .
+    container_name: galah
+    restart: always
+#    cpu_count: 1
+#    cpus: 0.25
+    networks:
+     - galah_local
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8443:8443"
+      - "8080:8080"
+    image: ghcr.io/telekom-security/galah:24.04.1
+    environment:
+      LLM_PROVIDER: "openai"
+      LLM_SERVER_URL: "https://api.openai.com/v1"
+      LLM_MODEL: "gpt-4o-mini"
+      # LLM_TEMPERATURE: ${GALAH_LLM_TEMPERATURE}
+      LLM_API_KEY: ""
+      # LLM_CLOUD_LOCATION: ${GALAH_LLM_CLOUD_LOCATION}QA
+      # LLM_CLOUD_PROJECT: ${GALAH_LLM_CLOUD_PROJECT}
+    read_only: true
+    volumes:
+     - ./src/cache:/opt/galah/config/cache
+     - ./src/cert:/opt/galah/config/cert
+     - ./src/log:/opt/galah/log

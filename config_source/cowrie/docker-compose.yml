@@ -1,0 +1,24 @@
+networks:
+  cowrie_local:
+
+services:
+
+# Cowrie service
+  cowrie:
+    build: .
+    container_name: ${INSTANCE_NAME}
+    ports:
+      - "${SSH_PORT}:22" 
+      - "${TELNET_PORT}:23"
+    tmpfs:
+     - /tmp/cowrie:uid=2000,gid=2000
+     - /tmp/cowrie/data:uid=2000,gid=2000
+    networks:
+     - cowrie_local
+    image: "ghcr.io/telekom-security/cowrie:24.04.1"
+    read_only: true
+    volumes:
+     - ./downloads:/home/cowrie/cowrie/dl
+     - ./etc:/home/cowrie/cowrie/etc
+     - ./log:/home/cowrie/cowrie/log
+     - ./log/tty:/home/cowrie/cowrie/log/tty

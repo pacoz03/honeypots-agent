@@ -1,0 +1,44 @@
+networks:
+  dionaea_local:
+
+services:
+
+# Dionaea service
+  dionaea:
+    build: .
+    container_name: dionaea
+    stdin_open: true
+    tty: true
+    restart: always
+#    cpu_count: 1
+#    cpus: 0.25
+    networks:
+     - dionaea_local
+    ports:
+     - "20:20"
+     - "21:21"
+     - "42:42"
+     - "69:69/udp"
+     - "81:81"
+     - "135:135"
+     - "443:443"
+#     - "445:445"
+     - "1433:1433"
+     - "1723:1723"
+     - "1883:1883"
+     - "3307:3306"
+#     - "5060:5060"
+#     - "5060:5060/udp"
+#     - "5061:5061"
+     - "27017:27017"
+    image: "dtagdevsec/dionaea:24.04"
+    volumes:
+     - ./src/roots/ftp:/opt/dionaea/var/dionaea/roots/ftp
+     - ./src/roots/tftp:/opt/dionaea/var/dionaea/roots/tftp
+     - ./src/roots/www:/opt/dionaea/var/dionaea/roots/www
+     - ./src/roots/upnp:/opt/dionaea/var/dionaea/roots/upnp
+     - ./src:/opt/dionaea/var/dionaea
+     - ./src/binaries:/opt/dionaea/var/dionaea/binaries
+     - ./src/bistreams:/opt/dionaea/var/dionaea/bistreams
+     - ./src/log:/opt/dionaea/var/log
+     - ./src/rtp:/opt/dionaea/var/dionaea/rtp

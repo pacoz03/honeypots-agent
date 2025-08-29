@@ -1,0 +1,42 @@
+FROM golang:1.23-alpine as builder
+#
+# Include dist
+COPY dist/ /root/dist/
+#
+# Install packages
+RUN apk --no-cache -U upgrade && \
+    apk --no-cache -U add \
+        build-base \
+        git \
+        go \
+        g++
+#
+# Setup go, redishoneypot
+RUN cd /root && \
+    export GOPATH=/opt/go/ && \
+    mkdir -p /opt/go && \ 
+    git clone https://github.com/cypwnpwnsocute/RedisHoneyPot && \
+    cd RedisHoneyPot && \
+    git checkout 45adc622a423d12d76392c3a54274f6cff111d58 && \
+    go mod download && \
+    go install
+
+# --- Final Stage ---
+FROM alpine:3.20
+
+# Create a non-root user and group
+RUN addgroup -g 2000 redispot && \
+    adduser -u 2000 -G redispot -D -S redispot
+
+# Setup redishoneypot
+COPY --from=builder /opt/go/bin/RedisHoneyPot /opt/redishoneypot/
+COPY --from=builder /root/dist/redis.conf /opt/redishoneypot/
+
+WORKDIR /opt/redishoneypot
+# Imposta i permessi corretti per l'eseguibile
+RUN chown -R redispot:redispot /opt/redishoneypot
+
+# Switch to the non-root user
+USER redispot:redispot
+
+CMD /bin/sh -c './RedisHoneyPot >> /var/log/redishoneypot/redishoneypot.log 2>&1'
