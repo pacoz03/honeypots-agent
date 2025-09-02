@@ -17,4 +17,4 @@ services:
      - NET_RAW
     image: "ghcr.io/telekom-security/suricata:24.04.1"
     volumes:
-     - $HOME/tpotce/data/suricata/log:/var/log/suricata
+     - ./log:/var/log/suricata

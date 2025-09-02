@@ -1,9 +1,7 @@
 
 import streamlit as st
 import os
-import shutil
 import subprocess
-import time
 import difflib
 from typing import Type, Dict, Any
 
@@ -160,7 +158,7 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "agent_executor" not in st.session_state:
     # Setup dell'agente una sola volta
-    llm = ChatOpenAI(model="deepseek-coder", temperature=0, api_key="sk-4a7a12ba0d544f35aab545bee74e8cc5", base_url="https://api.deepseek.com/v1")
+    llm = ChatOpenAI(model=" deepseek-chat", temperature=0, api_key="sk-82c61c141be0491489416a9ba67710f8V", base_url="https://api.deepseek.com/v1")
     fs_tools = FileManagementToolkit(root_dir=str(PROJECT_ROOT)).get_tools()
     custom_tools = [
         CowrieDeployTool(), RedisHoneyPotDeployTool(), ProposeAndApplyFileChangeTool(),

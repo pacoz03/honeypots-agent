@@ -210,3 +210,5 @@ GEMINI.md
 honeypots/
 config_source/elk
 .env
+
+pages/

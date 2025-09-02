@@ -15,13 +15,16 @@ from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_community.agent_toolkits import FileManagementToolkit
-
+from langchain_deepseek import ChatDeepSeek
 # Custom tools
 from redis import RedisHoneyPotDeployTool
 from cowrie import CowrieDeployTool
 from dionaea import DionaeaHoneyPotDeployTool
 from wordpress import WordPotDeployTool
-
+from suricata import SuricataHoneyPotDeployTool
+from lifecycle_tools import (
+    GetHoneypotLogsTool, StartHoneypotTool, DestroyHoneypotTool, StopHoneypotTool, ListActiveHoneypotsTool
+)
 # --- Configuration ---
 load_dotenv()
 PROJECT_ROOT = os.path.abspath(os.getcwd())
@@ -54,6 +57,28 @@ class RunShellCommandTool(BaseTool):
             st.error(error_message)
             return error_message
 
+class ReadFileHeadInput(BaseModel):
+    path: str = Field(description="The path of the file to read.")
+    lines: int = Field(default=10, description="The number of lines to read from the beginning of the file.")
+
+class ReadFileHeadTool(BaseTool):
+    name: str = "read_file_head"
+    description: str = "Use this tool to read the first N lines of a file. It's much more efficient than reading the whole file."
+    args_schema: Type[BaseModel] = ReadFileHeadInput
+
+    def _run(self, path: str, lines: int = 10) -> str:
+        if not _is_path_safe(path):
+            return "Error: Access denied. Path is outside the allowed project directory."
+        try:
+            with open(path, 'r', encoding='utf-8', errors='replace') as f:
+                head_lines = [next(f) for _ in range(lines)]
+            return "".join(head_lines)
+        except FileNotFoundError:
+            return f"Error: File not found at path '{path}'."
+        except StopIteration:
+            return "Successfully read all lines (file is shorter than requested number of lines)."
+        except Exception as e:
+            return f"An unexpected error occurred: {str(e)}"
 # ==============================================================================
 # TOOL DI MODIFICA FILE (RIADATTATO PER LA GUI)
 # ==============================================================================
@@ -120,7 +145,7 @@ class RunInContainerTool(BaseTool):
         return "Comando proposto all'utente per l'approvazione. Attendo la risposta dall'interfaccia."
 
 # ==============================================================================
-# NUOVO TOOL: CREAZIONE PAGINA DASHBOARD DINAMICA
+# CREAZIONE PAGINA DASHBOARD DINAMICA
 # ==============================================================================
 class CreateDashboardPageInput(BaseModel):
     filename: str = Field(description="The Python filename for the new page (e.g., 'dashboard_name.py'). Must end with .py and contain no spaces or special characters.")
@@ -197,31 +222,38 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "agent_executor" not in st.session_state:
     # Setup dell'agente una sola volta
-    llm = ChatOpenAI(model="deepseek-coder", temperature=0, api_key="sk-4a7a12ba0d544f35aab545bee74e8cc5", base_url="https://api.deepseek.com/v1")
+    llm = ChatDeepSeek(model="deepseek-reasoner", temperature=0, api_key=os.getenv("DEEPSEEK_API_KEY"), base_url="https://api.deepseek.com/v1")
     fs_tools = FileManagementToolkit(root_dir=str(PROJECT_ROOT)).get_tools()
     custom_tools = [
         CowrieDeployTool(), RedisHoneyPotDeployTool(), ProposeAndApplyFileChangeTool(),
         RunInContainerTool(), RunShellCommandTool(), WordPotDeployTool(), DionaeaHoneyPotDeployTool(),
-        CreateDashboardPageTool()  # NUOVO: Aggiunta del tool alla lista
+        CreateDashboardPageTool(), SuricataHoneyPotDeployTool(),
+        GetHoneypotLogsTool(), StartHoneypotTool(), StopHoneypotTool(), DestroyHoneypotTool(), ListActiveHoneypotsTool(),
+        ReadFileHeadTool()
     ]
     tools = custom_tools + fs_tools
     
     # Prompt corretto e potenziato
     prompt = ChatPromptTemplate.from_messages([
         ("system",
-         "You are a helpful and secure DevOps assistant. Your file access is restricted to the project directory, on a Windows machine.\n"
-         "To run a command inside the honeypot container, use the 'run_in_container' tool. The user will be asked to approve every command.\n"
-         "IMPORTANT WORKFLOW FOR MODIFYING FILES:\n"
-         "1. Use 'read_file' to read the content.\n"
-         "2. Use 'propose_and_apply_file_change' to generate the differences and apply them.\n"
-         "3. Show the user the proposed changes and ASK for their approval.\n"
-         "4. ONLY after approval, use 'write_file' to appropriately apply the changes.\n"
-         "5. Before starting the container, check if the same honeypot is already running. If it is, ask the user if they want to stop or configure the same honeypot on a different port.\n"
-         # NUOVO: Istruzioni per il nuovo tool
-         "NEW CAPABILITY: You can create new dynamic dashboard pages in the UI to visualize data using the 'create_dashboard_page' tool. "
-         "To do this, first read the relevant data (like a log file), then generate the necessary Python code for the Streamlit page, and finally call the tool to create it. "
-         "The generated Python code must be complete and include all necessary imports (like streamlit, pandas, json, etc.)."
-         ),
+        "You are a helpful and secure DevOps assistant. Your file access is restricted to the project directory, on a Windows machine.\n"
+        "To run a command inside the honeypot container, use the 'run_in_container' tool. The user will be asked to approve every command.\n"
+        "IMPORTANT WORKFLOW FOR MODIFYING FILES:\n"
+        "1. Use 'read_file' to read the content.\n"
+        "2. Use 'propose_and_apply_file_change' to generate the differences and apply them.\n"
+        "3. Show the user the proposed changes and ASK for their approval.\n"
+        "4. ONLY after approval, use 'write_file' to appropriately apply the changes.\n"
+        "5. Before starting the container, check if the same honeypot is already running. If it is, ask the user if they want to stop or configure the same honeypot on a different port.\n"
+
+        "IMPORTANT CAPABILITY: You can create new dynamic dashboard pages in the UI to visualize data using the 'create_dashboard_page' tool. "
+        "When asked to create a dashboard, follow these steps:\n"
+        "1. To understand the structure of a data source (like a log file) for a dashboard, **DO NOT read the entire file** as it can be very large. Instead, read only a small sample (e.g., the first 50 lines) to analyze its format. Use the `run_shell_command` tool for this. Since the system is Windows, a good command is `Get-Content -Path 'path\\to\\your\\file.log' -Head 50`.\n"
+        "2. Then, generate the complete Python code for the Streamlit page.\n"
+        "3. For all visualizations and plots, you MUST use the 'plotly' library (e.g., 'import plotly.express as px').\n"
+        "4. Do NOT use other plotting libraries like Matplotlib or Seaborn, as they are not available in the environment.\n"
+        "5. The generated code must be self-contained and include all necessary imports (e.g., 'import streamlit as st', 'import pandas as pd', 'import plotly.express as px').\n"
+        "6. Finally, use the 'create_dashboard_page' tool with the correct filename and the generated code."
+        ),
         MessagesPlaceholder(variable_name="chat_history"),
         ("user", "{input}"),
         MessagesPlaceholder(variable_name="agent_scratchpad"),
