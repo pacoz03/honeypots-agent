@@ -4,7 +4,12 @@ import shutil
 import subprocess
 import time
 import difflib
-from typing import Type, Dict, Any
+from typing import Type, Dict, Any, List, Union
+
+# --- NUOVO: Import per il Callback Handler ---
+from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.agents import AgentAction, AgentFinish
+from langchain_core.outputs import LLMResult
 
 # LangChain components
 from dotenv import load_dotenv
@@ -34,7 +39,44 @@ def _is_path_safe(path: str) -> bool:
     requested_path = os.path.abspath(path)
     return os.path.commonprefix([requested_path, PROJECT_ROOT]) == PROJECT_ROOT
 
-# --- Strumenti dell'Agente (Modificati per Streamlit) ---
+class StreamlitCallbackHandler(BaseCallbackHandler):
+    """Callback Handler che scrive i passaggi dell'agente in uno Streamlit container."""
+
+    def __init__(self, container):
+        self.container = container
+        self.tool_call_counter = 1
+
+    def on_llm_start(self, serialized: Dict[str, Any], prompts: List[str], **kwargs: Any) -> Any:
+        """Stampato all'inizio della chiamata LLM."""
+        self.container.info("🧠 L'agente sta pensando...")
+
+    def on_agent_action(self, action: AgentAction, **kwargs: Any) -> Any:
+        """Stampato quando l'agente decide di usare uno strumento."""
+        tool_name = action.tool
+        tool_input = action.tool_input
+        self.container.info(f"▶️ **Azione #{self.tool_call_counter}:** Utilizzo dello strumento `{tool_name}`")
+        self.container.code(f"Input: {tool_input}", language="json")
+        self.tool_call_counter += 1
+
+    def on_tool_end(self, output: str, **kwargs: Any) -> Any:
+        """Stampato al termine dell'esecuzione di uno strumento."""
+        self.container.markdown("---")
+        self.container.success("✅ **Risultato dello Strumento:**")
+        # Mostra l'output in un blocco espandibile se è molto lungo
+        if len(output) > 200:
+            with self.container.expander("Mostra output completo"):
+                st.code(output, language='text')
+        else:
+            self.container.code(output, language='text')
+        self.container.markdown("---")
+        
+    def on_agent_finish(self, finish: AgentFinish, **kwargs: Any) -> Any:
+        """Stampato quando l'agente ha terminato e restituisce la risposta finale."""
+        self.container.success("🏁 L'agente ha completato il suo ragionamento.")
+        self.tool_call_counter = 1
+
+
+# --- Strumenti dell'Agente (Invariati) ---
 
 class RunShellCommandInput(BaseModel):
     command: str = Field(description="The shell command to execute.")
@@ -79,9 +121,7 @@ class ReadFileHeadTool(BaseTool):
             return "Successfully read all lines (file is shorter than requested number of lines)."
         except Exception as e:
             return f"An unexpected error occurred: {str(e)}"
-# ==============================================================================
-# TOOL DI MODIFICA FILE (RIADATTATO PER LA GUI)
-# ==============================================================================
+            
 class ProposeFileChangeInput(BaseModel):
     path: str = Field(description="The path of the file to modify.")
     content: str = Field(description="The new, full content to write to the file.")
@@ -114,7 +154,6 @@ class ProposeAndApplyFileChangeTool(BaseTool):
         if not diff:
             return f"✅ Nessuna modifica rilevata per '{path}'. Il file è già aggiornato."
 
-        # Salva l'azione pendente nello stato della sessione per l'approvazione
         st.session_state.pending_action = {
             "type": "file_change",
             "path": path,
@@ -123,10 +162,6 @@ class ProposeAndApplyFileChangeTool(BaseTool):
         }
         return "Azione proposta all'utente per l'approvazione. Attendo la risposta dall'interfaccia."
 
-
-# ==============================================================================
-# TOOL ESECUZIONE IN CONTAINER (RIADATTATO PER LA GUI)
-# ==============================================================================
 class RunInContainerInput(BaseModel):
     command: str = Field(description="The command to execute inside the Cowrie container.")
 
@@ -136,7 +171,6 @@ class RunInContainerTool(BaseTool):
     args_schema: Type[BaseModel] = RunInContainerInput
 
     def _run(self, command: str) -> str:
-        # Salva l'azione pendente nello stato della sessione per l'approvazione
         st.session_state.pending_action = {
             "type": "container_command",
             "command": command,
@@ -144,9 +178,6 @@ class RunInContainerTool(BaseTool):
         }
         return "Comando proposto all'utente per l'approvazione. Attendo la risposta dall'interfaccia."
 
-# ==============================================================================
-# CREAZIONE PAGINA DASHBOARD DINAMICA
-# ==============================================================================
 class CreateDashboardPageInput(BaseModel):
     filename: str = Field(description="The Python filename for the new page (e.g., 'dashboard_name.py'). Must end with .py and contain no spaces or special characters.")
     page_code: str = Field(description="The full, valid Python code to write to the file. This code will be executed as a Streamlit page and should be self-contained.")
@@ -173,7 +204,7 @@ class CreateDashboardPageTool(BaseTool):
             with open(file_path, 'w', encoding='utf-8') as f:
                 f.write(page_code)
             
-            time.sleep(1) # Dai tempo a Streamlit per rilevare il nuovo file
+            time.sleep(1) 
             st.success(f"Nuova pagina dashboard '{filename}' creata! Controlla la barra laterale per vederla.")
             return f"Dashboard page '{filename}' created successfully. The user can now navigate to it from the sidebar."
             
@@ -182,7 +213,7 @@ class CreateDashboardPageTool(BaseTool):
             st.error(error_message)
             return error_message
 
-# --- Funzioni Helper per l'esecuzione post-approvazione ---
+# --- Funzioni Helper (Invariate) ---
 
 def execute_approved_file_change(action: Dict[str, Any]):
     """Scrive il file dopo che l'utente ha cliccato 'Approva'."""
@@ -210,8 +241,7 @@ def execute_approved_container_command(action: Dict[str, Any]):
         st.error(f"Errore durante l'esecuzione del comando docker: {e}")
         return f"Command failed with an error: {e}"
 
-
-# --- Interfaccia Grafica con Streamlit ---
+# --- Interfaccia Grafica con Streamlit (Invariata fino al loop principale) ---
 
 st.set_page_config(page_title="🤖 Agente DevOps Interattivo", layout="wide")
 st.title("🤖 Agente DevOps Interattivo")
@@ -221,7 +251,6 @@ st.caption("Un assistente per aiutarti a gestire e deployare i tuoi honeypot.")
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "agent_executor" not in st.session_state:
-    # Setup dell'agente una sola volta
     llm = ChatDeepSeek(model="deepseek-reasoner", temperature=0, api_key=os.getenv("DEEPSEEK_API_KEY"), base_url="https://api.deepseek.com/v1")
     fs_tools = FileManagementToolkit(root_dir=str(PROJECT_ROOT)).get_tools()
     custom_tools = [
@@ -233,7 +262,6 @@ if "agent_executor" not in st.session_state:
     ]
     tools = custom_tools + fs_tools
     
-    # Prompt corretto e potenziato
     prompt = ChatPromptTemplate.from_messages([
         ("system",
         "You are a helpful and secure DevOps assistant. Your file access is restricted to the project directory, on a Windows machine.\n"
@@ -283,14 +311,12 @@ if "pending_action" in st.session_state and st.session_state.pending_action:
         col1, col2 = st.columns(2)
         with col1:
             if st.button("✅ Approva", use_container_width=True, key="approve"):
-                # Esegui l'azione approvata
                 result = ""
                 if action["type"] == "file_change":
                     result = execute_approved_file_change(action)
                 elif action["type"] == "container_command":
                     result = execute_approved_container_command(action)
                 
-                # Pulisci l'azione e continua la conversazione
                 st.session_state.pending_action = None
                 st.session_state.messages.append(HumanMessage(content=f"Azione approvata dall'utente. Risultato: {result}"))
                 st.rerun()
@@ -299,7 +325,6 @@ if "pending_action" in st.session_state and st.session_state.pending_action:
             if st.button("❌ Nega", use_container_width=True, key="deny"):
                 st.warning("Azione negata dall'utente.")
                 result = "User denied the action."
-                # Pulisci l'azione e continua la conversazione
                 st.session_state.pending_action = None
                 st.session_state.messages.append(HumanMessage(content=result))
                 st.rerun()
@@ -309,22 +334,33 @@ else:
         st.session_state.messages.append(HumanMessage(content=user_input))
         with st.chat_message("user"):
             st.markdown(user_input)
-
         with st.chat_message("assistant"):
-            with st.spinner("L'agente sta pensando..."):
-                try:
-                    response = st.session_state.agent_executor.invoke({
+            # 1. Creiamo un'area espandibile solo per i log del ragionamento
+            expander = st.expander("🔎 **Ragionamento dell'Agente**")
+            log_container = expander.container()
+            callback = StreamlitCallbackHandler(log_container)
+
+            # 2. Eseguiamo l'agente. Il callback scriverà i suoi log DENTRO l'expander.
+            try:
+                response = st.session_state.agent_executor.invoke(
+                    {
                         "input": user_input,
                         "chat_history": st.session_state.messages
-                    })
-                    # Se l'agente non ha proposto un'azione, mostra la sua risposta
-                    if not st.session_state.get("pending_action"):
-                        st.markdown(response['output'])
-                        st.session_state.messages.append(AIMessage(content=response['output']))
-                    else:
-                        # Se è stata proposta un'azione, la UI si aggiornerà da sola
-                        st.rerun()
+                    },
+                    config={"callbacks": [callback]}
+                )
+                
+                # 3. Controlliamo se è necessaria un'azione o se abbiamo una risposta finale.
+                if not st.session_state.get("pending_action"):
+                    # 4. Scriviamo la risposta finale QUI, nel corpo principale del messaggio dell'assistente.
+                    st.markdown(response['output'])
+                    st.session_state.messages.append(AIMessage(content=response['output']))
+                else:
+                    # Se è stata proposta un'azione, la UI ha bisogno di un refresh per mostrare
+                    # i pulsanti di approvazione. La logica di gestione `pending_action` all'inizio
+                    # della pagina si occuperà di visualizzarla.
+                    st.rerun()
 
-                except Exception as e:
-                    st.error(f"Si è verificato un errore: {e}")
-                    st.session_state.messages.append(AIMessage(content=f"Errore: {e}"))
+            except Exception as e:
+                st.error(f"Si è verificato un errore: {e}")
+                st.session_state.messages.append(AIMessage(content=f"Errore: {e}"))
